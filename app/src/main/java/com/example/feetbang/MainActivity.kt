@@ -21,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -56,17 +57,31 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun FlashbangApp() {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("feetbang_prefs", Context.MODE_PRIVATE) }
+    
     var showSettings by remember { mutableStateOf(false) }
-    var useCustomImage by remember { mutableStateOf(false) }
-    var customImageUri by remember { mutableStateOf<Uri?>(null) }
+    
+    var useCustomImage by remember { 
+        mutableStateOf(prefs.getBoolean("use_custom_image", false)) 
+    }
+    var customImageUri by remember { 
+        mutableStateOf(prefs.getString("custom_image_uri", null)?.let { Uri.parse(it) }) 
+    }
 
     if (showSettings) {
         SettingsScreen(
             useCustomImage = useCustomImage,
             customImageUri = customImageUri,
             onBack = { showSettings = false },
-            onToggleCustom = { useCustomImage = it },
-            onImageSelected = { customImageUri = it }
+            onToggleCustom = { 
+                useCustomImage = it
+                prefs.edit().putBoolean("use_custom_image", it).apply()
+            },
+            onImageSelected = { uri ->
+                customImageUri = uri
+                prefs.edit().putString("custom_image_uri", uri?.toString()).apply()
+            }
         )
     } else {
         FlashbangScreen(
@@ -85,10 +100,19 @@ fun SettingsScreen(
     onToggleCustom: (Boolean) -> Unit,
     onImageSelected: (Uri?) -> Unit
 ) {
+    val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             onImageSelected(uri)
         }
     }
@@ -135,7 +159,7 @@ fun SettingsScreen(
 
             if (useCustomImage) {
                 Button(
-                    onClick = { launcher.launch("image/*") },
+                    onClick = { launcher.launch(arrayOf("image/*")) },
                     modifier = Modifier.padding(top = 16.dp)
                 ) {
                     Text(if (customImageUri == null) "Select Image" else "Change Image")
@@ -175,7 +199,7 @@ fun FlashbangScreen(
     val brightness = remember { Animatable(0.5f) }
 
     // Load custom image bitmap if selected
-    val customImageBitmap by produceState<ImageBitmap?>(initialValue = null, customImageUri) {
+    val customImageBitmap by produceState<ImageBitmap?>(initialValue = null, useCustomImage, customImageUri) {
         value = if (useCustomImage && customImageUri != null) {
             withContext(Dispatchers.IO) {
                 try {
@@ -183,6 +207,7 @@ fun FlashbangScreen(
                         BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
                     }
                 } catch (e: Exception) {
+                    e.printStackTrace()
                     null
                 }
             }
@@ -268,7 +293,9 @@ fun FlashbangScreen(
                 onClick = onOpenSettings,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 32.dp, end = 16.dp)
+                    .statusBarsPadding()
+                    .padding(16.dp)
+                    .background(Color.Black.copy(alpha = 0.2f), CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Settings,
