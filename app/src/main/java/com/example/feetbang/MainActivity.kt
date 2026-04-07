@@ -270,6 +270,7 @@ fun FlashbangScreen(
                         audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
                         0
                     )
+                    mediaPlayer.seekTo(0)
                     mediaPlayer.start()
                     scope.launch {
                         overlayAlpha.snapTo(1f)
@@ -277,6 +278,9 @@ fun FlashbangScreen(
                         launch { overlayAlpha.animateTo(0f, tween(3000)) }
                         launch { brightness.animateTo(0.5f, tween(3000)) }
                     }
+                } else if (!overlayAlpha.isRunning) {
+                    // Reset back to initial state if the animation has finished
+                    isTriggered = false
                 }
             }
     ) {
