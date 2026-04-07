@@ -1,4 +1,4 @@
-# Feetbang - Flashbang Prank App
+# Flashbang Prank App
 
 Feetbang is a simple Android application built with Jetpack Compose designed for a classic "flashbang" prank. 
 
