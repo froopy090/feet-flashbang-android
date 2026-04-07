@@ -2,6 +2,7 @@ package com.example.feetbang
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -9,23 +10,37 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.feetbang.ui.theme.FeetbangTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,16 +48,125 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             FeetbangTheme {
-                FlashbangScreen()
+                FlashbangApp()
             }
         }
     }
 }
 
 @Composable
-fun FlashbangScreen() {
+fun FlashbangApp() {
+    var showSettings by remember { mutableStateOf(false) }
+    var useCustomImage by remember { mutableStateOf(false) }
+    var customImageUri by remember { mutableStateOf<Uri?>(null) }
+
+    if (showSettings) {
+        SettingsScreen(
+            useCustomImage = useCustomImage,
+            customImageUri = customImageUri,
+            onBack = { showSettings = false },
+            onToggleCustom = { useCustomImage = it },
+            onImageSelected = { customImageUri = it }
+        )
+    } else {
+        FlashbangScreen(
+            useCustomImage = useCustomImage,
+            customImageUri = customImageUri,
+            onOpenSettings = { showSettings = true }
+        )
+    }
+}
+
+@Composable
+fun SettingsScreen(
+    useCustomImage: Boolean,
+    customImageUri: Uri?,
+    onBack: () -> Unit,
+    onToggleCustom: (Boolean) -> Unit,
+    onImageSelected: (Uri?) -> Unit
+) {
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            onImageSelected(uri)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            @OptIn(ExperimentalMaterial3Api::class)
+            TopAppBar(title = { Text("Settings") })
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = !useCustomImage,
+                        onClick = { onToggleCustom(false) }
+                    )
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = !useCustomImage, onClick = { onToggleCustom(false) })
+                Text("Use default after image", modifier = Modifier.padding(start = 8.dp))
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = useCustomImage,
+                        onClick = { onToggleCustom(true) }
+                    )
+                    .padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = useCustomImage, onClick = { onToggleCustom(true) })
+                Text("Use custom after image", modifier = Modifier.padding(start = 8.dp))
+            }
+
+            if (useCustomImage) {
+                Button(
+                    onClick = { launcher.launch("image/*") },
+                    modifier = Modifier.padding(top = 16.dp)
+                ) {
+                    Text(if (customImageUri == null) "Select Image" else "Change Image")
+                }
+                
+                customImageUri?.let {
+                    Text("Image selected: ${it.lastPathSegment}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Button(
+                onClick = onBack,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Back")
+            }
+        }
+    }
+}
+
+@Composable
+fun FlashbangScreen(
+    useCustomImage: Boolean,
+    customImageUri: Uri?,
+    onOpenSettings: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
     
     var hasPermission by remember { mutableStateOf(Settings.System.canWrite(context)) }
     var isTriggered by remember { mutableStateOf(false) }
@@ -50,7 +174,23 @@ fun FlashbangScreen() {
     val overlayAlpha = remember { Animatable(0f) }
     val brightness = remember { Animatable(0.5f) }
 
-    // Media Player setup
+    // Load custom image bitmap if selected
+    val customImageBitmap by produceState<ImageBitmap?>(initialValue = null, customImageUri) {
+        value = if (useCustomImage && customImageUri != null) {
+            withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(customImageUri)?.use { inputStream ->
+                        BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        } else {
+            null
+        }
+    }
+
     val mediaPlayer = remember {
         MediaPlayer.create(context, R.raw.flashbang_sound).apply {
             setAudioAttributes(
@@ -63,13 +203,21 @@ fun FlashbangScreen() {
     }
 
     DisposableEffect(Unit) {
-        onDispose {
-            mediaPlayer.release()
-        }
+        onDispose { mediaPlayer.release() }
     }
 
-    // Permission check
-    LaunchedEffect(Unit) {
+    // Permission re-check on resume
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasPermission = Settings.System.canWrite(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(hasPermission) {
         if (!hasPermission) {
             val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
                 data = Uri.parse("package:${context.packageName}")
@@ -79,7 +227,6 @@ fun FlashbangScreen() {
         }
     }
 
-    // Update system brightness when the state changes
     LaunchedEffect(brightness.value) {
         if (hasPermission) {
             setSystemBrightness(context, brightness.value)
@@ -92,48 +239,61 @@ fun FlashbangScreen() {
             .clickable {
                 if (!isTriggered) {
                     isTriggered = true
-                    
-                    // Maximize volume
                     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                     audioManager.setStreamVolume(
                         AudioManager.STREAM_MUSIC,
                         audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
                         0
                     )
-                    
                     mediaPlayer.start()
-
                     scope.launch {
-                        // Flash
                         overlayAlpha.snapTo(1f)
                         brightness.snapTo(1f)
-                        
-                        // Fade out
-                        launch {
-                            overlayAlpha.animateTo(
-                                targetValue = 0f,
-                                animationSpec = tween(durationMillis = 3000)
-                            )
-                        }
-                        launch {
-                            brightness.animateTo(
-                                targetValue = 0.5f,
-                                animationSpec = tween(durationMillis = 3000)
-                            )
-                        }
+                        launch { overlayAlpha.animateTo(0f, tween(3000)) }
+                        launch { brightness.animateTo(0.5f, tween(3000)) }
                     }
                 }
             }
     ) {
-        // Background Image
-        Image(
-            painter = painterResource(id = if (isTriggered) R.drawable.after_image else R.drawable.initial_image),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
+        if (!isTriggered) {
+            Image(
+                painter = painterResource(id = R.drawable.initial_image),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            
+            // Settings Icon
+            IconButton(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 32.dp, end = 16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings",
+                    tint = Color.White
+                )
+            }
+        } else {
+            if (useCustomImage && customImageBitmap != null) {
+                Image(
+                    bitmap = customImageBitmap!!,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Image(
+                    painter = painterResource(id = R.drawable.after_image),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
 
-        // White Overlay
         Box(
             modifier = Modifier
                 .fillMaxSize()
